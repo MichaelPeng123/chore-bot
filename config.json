@@ -1,0 +1,15 @@
+{
+  "roommates": [
+    { "name": "User1", "discord_user_id": "USER1_ID" },
+    { "name": "User2", "discord_user_id": "USER2_ID" }
+  ],
+  "chores": [
+    "Vacuum living room",
+    "Clean bathroom",
+    "Take out trash",
+    "Wipe down kitchen"
+  ],
+  "cycle_days": 3,
+  "remind_before_days": 1,
+  "timezone": "America/Los_Angeles"
+}
