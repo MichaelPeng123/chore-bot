@@ -67,6 +67,9 @@ async def on_ready():
     """
     logger.info(f"[bot] Logged in as {bot.user} (id: {bot.user.id})")
 
+    # --- Initialise database ---
+    state_module.init_db()
+
     # --- Bootstrap: ensure there is an active cycle ---
     current_state = state_module.load_state()
     if not state_module.is_active_cycle(current_state):
