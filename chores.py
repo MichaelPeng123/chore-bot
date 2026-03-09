@@ -93,6 +93,38 @@ def format_assignment_message(state: dict) -> str:
     return "\n".join(lines)
 
 
+def format_history_message(history: list[dict]) -> str:
+    """
+    Build the history message for the !history command.
+
+    Example output:
+        **Chore history (last 3 cycles):**
+
+        Cycle 3 — Mar 5 to Mar 8
+        ✅ User1 → Vacuum living room
+        ⏳ User2 → Clean bathroom
+
+        Cycle 2 — Mar 2 to Mar 5
+        ✅ User1 → Take out trash
+        ✅ User2 → Vacuum living room
+    """
+    if not history:
+        return "No completed cycles yet."
+
+    lines = [f"**Chore history (last {len(history)} cycle{'s' if len(history) != 1 else ''}):**"]
+    for entry in history:
+        try:
+            start = datetime.fromisoformat(str(entry["cycle_start"])).strftime("%b %-d")
+            end = datetime.fromisoformat(str(entry["cycle_end"])).strftime("%b %-d")
+        except (ValueError, TypeError):
+            start = end = "?"
+        lines.append(f"\nCycle {entry['cycle_number']} — {start} to {end}")
+        for a in entry["assignments"]:
+            icon = "✅" if a.get("completed") else "⏳"
+            lines.append(f"{icon} {a['roommate']} → {a['chore']}")
+    return "\n".join(lines)
+
+
 def format_status_message(state: dict) -> str:
     """
     Build the status message for the !status command.

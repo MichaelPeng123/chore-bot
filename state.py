@@ -25,7 +25,7 @@ def _get_conn():
 
 def init_db() -> None:
     """
-    Create the bot_state table if it doesn't exist.
+    Create the bot_state and assignment_history tables if they don't exist.
     Call once at startup before any load/save operations.
     """
     with _get_conn() as conn:
@@ -34,6 +34,15 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS bot_state (
                     id INTEGER PRIMARY KEY DEFAULT 1,
                     data JSONB NOT NULL
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS assignment_history (
+                    cycle_number INTEGER PRIMARY KEY,
+                    cycle_start  TIMESTAMPTZ,
+                    cycle_end    TIMESTAMPTZ,
+                    assignments  JSONB NOT NULL,
+                    archived_at  TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
         conn.commit()
@@ -113,3 +122,51 @@ def all_complete(state: dict) -> bool:
 def incomplete_assignments(state: dict) -> list[dict]:
     """Return a list of assignment dicts that are not yet completed."""
     return [a for a in state.get("assignments", []) if not a["completed"]]
+
+
+def archive_cycle(state: dict) -> None:
+    """
+    Save the given cycle to assignment_history.
+    Safe to call multiple times — ON CONFLICT DO NOTHING prevents duplicates.
+    """
+    if not state or "cycle_number" not in state:
+        return
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO assignment_history
+                        (cycle_number, cycle_start, cycle_end, assignments)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (cycle_number) DO NOTHING
+                """, (
+                    state["cycle_number"],
+                    state.get("cycle_start"),
+                    state.get("cycle_end"),
+                    json.dumps(state.get("assignments", []), default=str),
+                ))
+            conn.commit()
+        logger.info(f"[state] Archived cycle {state['cycle_number']}.")
+    except Exception as e:
+        logger.error(f"[state] Failed to archive cycle: {e}")
+
+
+def load_history(limit: int = 5) -> list[dict]:
+    """
+    Return the last `limit` completed cycles, most recent first.
+    Each entry has: cycle_number, cycle_start, cycle_end, assignments.
+    """
+    try:
+        with _get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT cycle_number, cycle_start, cycle_end, assignments
+                    FROM assignment_history
+                    ORDER BY cycle_number DESC
+                    LIMIT %s
+                """, (limit,))
+                rows = cur.fetchall()
+                return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"[state] Failed to load history: {e}")
+        return []

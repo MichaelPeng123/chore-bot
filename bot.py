@@ -126,6 +126,10 @@ async def on_message(message: discord.Message):
         await _handle_mychore(message)
         return
 
+    if content == "!history":
+        await _handle_history(message)
+        return
+
     # --- Chore completion detection ---
     # Check if the message contains any of the completion keywords
     if any(keyword in content for keyword in COMPLETE_KEYWORDS):
@@ -142,6 +146,7 @@ async def _handle_help(message: discord.Message) -> None:
         "**Chore Bot Commands**\n"
         "`!status`  — Show current chore assignments and completion status\n"
         "`!mychore` — Show your current chore assignment\n"
+        "`!history` — Show the last 5 completed cycles\n"
         "`!help`    — Show this help message\n\n"
         "Say `chore complete`, `done`, `finished`, or `completed` to mark your chore done."
     )
@@ -175,6 +180,12 @@ async def _handle_mychore(message: discord.Message) -> None:
 
     # User is not in this cycle's assignments — silently ignore or inform
     await message.channel.send("You don't have a chore assigned this cycle.")
+
+
+async def _handle_history(message: discord.Message) -> None:
+    """Post the last 5 completed cycles and their assignment outcomes."""
+    history = state_module.load_history()
+    await message.channel.send(chores.format_history_message(history))
 
 
 async def _handle_chore_complete(message: discord.Message) -> None:

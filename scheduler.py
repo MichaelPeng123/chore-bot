@@ -68,6 +68,10 @@ async def assign_chores(bot, config: dict) -> None:
         logger.info("[scheduler] assign_chores: current cycle still active, skipping.")
         return
 
+    # Archive the completed cycle before starting a new one
+    if current_state:
+        state_module.archive_cycle(current_state)
+
     # Determine next cycle number (default to 1 if no previous state)
     prev_cycle = current_state.get("cycle_number", 0)
     new_cycle_number = prev_cycle + 1
