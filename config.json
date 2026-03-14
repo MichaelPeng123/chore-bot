@@ -1,15 +1,9 @@
 {
   "roommates": [
     { "name": "User1", "discord_user_id": "USER1_ID" },
-    { "name": "User2", "discord_user_id": "USER2_ID" }
+    { "name": "User2", "discord_user_id": "USER2_ID" },
+    { "name": "User3", "discord_user_id": "USER3_ID" }
   ],
-  "chores": [
-    "Vacuum living room",
-    "Clean bathroom",
-    "Take out trash",
-    "Wipe down kitchen"
-  ],
-  "cycle_days": 3,
-  "remind_before_days": 1,
+  "chores": ["Take Out Trash", "Wipe Counter & Stove", "Vaccum and Swiffer Floor"],
   "timezone": "America/Los_Angeles"
 }

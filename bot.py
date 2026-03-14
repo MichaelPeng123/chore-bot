@@ -41,15 +41,23 @@ config = config_module.load_config()
 # ---------------------------------------------------------------------------
 # Discord client setup
 # ---------------------------------------------------------------------------
-# Enable the message_content intent so on_message can read message text
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = discord.Client(intents=intents)
-bot.channel_id = CHANNEL_ID  # Attach channel_id so scheduler helpers can reach it
+bot.channel_id = CHANNEL_ID
 
-# Keywords that count as "chore complete" acknowledgements
 COMPLETE_KEYWORDS = {"chore complete", "done", "finished", "completed"}
+
+RULES_MESSAGE = (
+    "**📋 Chore Bot Rules**\n"
+    "Saturday is CHORE DAY — please dedicate time to finish your chore on Saturday \n"
+    "New assignments post every Sunday at 8:00am.\n"
+    'Type `chore complete` when you finish your chore(s).\n'
+    "Each completed chore assignment earns 2 points.\n"
+    "Reach 100 points to earn a reward!\n"
+    "Use `!view-leaderboard` to see the current standings."
+)
 
 # ---------------------------------------------------------------------------
 # Events
@@ -59,16 +67,18 @@ COMPLETE_KEYWORDS = {"chore complete", "done", "finished", "completed"}
 async def on_ready():
     """
     Fires once after the bot has connected and is ready to receive events.
-
-    Responsibilities:
-    - Log that we are online.
-    - Check for an active cycle; create a new one and post assignments if none exists.
-    - Start the APScheduler.
     """
     logger.info(f"[bot] Logged in as {bot.user} (id: {bot.user.id})")
 
     # --- Initialise database ---
-    state_module.init_db()
+    state_module.init_db(config["roommates"])
+
+    # --- Post rules message on every startup ---
+    try:
+        channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
+        await channel.send(RULES_MESSAGE)
+    except Exception as e:
+        logger.error(f"[bot] Could not post rules message: {e}")
 
     # --- Bootstrap: ensure there is an active cycle ---
     current_state = state_module.load_state()
@@ -78,7 +88,6 @@ async def on_ready():
         new_state = chores.build_new_cycle(config, prev_cycle + 1)
         state_module.save_state(new_state)
 
-        # Post the first assignment message immediately
         try:
             channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
             await channel.send(chores.format_assignment_message(new_state))
@@ -97,23 +106,15 @@ async def on_ready():
 async def on_message(message: discord.Message):
     """
     Fires on every message in any channel the bot can see.
-
-    Handles:
-    - Ignoring bot messages and messages outside the configured channel.
-    - Detecting chore completion keywords.
-    - !status, !mychore, !help commands.
     """
-    # Ignore messages from bots (including ourselves)
     if message.author.bot:
         return
 
-    # Only process messages in the configured channel
     if message.channel.id != CHANNEL_ID:
         return
 
     content = message.content.lower().strip()
 
-    # --- Commands ---
     if content == "!help":
         await _handle_help(message)
         return
@@ -130,8 +131,10 @@ async def on_message(message: discord.Message):
         await _handle_history(message)
         return
 
-    # --- Chore completion detection ---
-    # Check if the message contains any of the completion keywords
+    if content == "!view-leaderboard":
+        await _handle_leaderboard(message)
+        return
+
     if any(keyword in content for keyword in COMPLETE_KEYWORDS):
         await _handle_chore_complete(message)
 
@@ -144,10 +147,11 @@ async def _handle_help(message: discord.Message) -> None:
     """Reply with a list of available commands."""
     help_text = (
         "**Chore Bot Commands**\n"
-        "`!status`  — Show current chore assignments and completion status\n"
-        "`!mychore` — Show your current chore assignment\n"
-        "`!history` — Show the last 5 completed cycles\n"
-        "`!help`    — Show this help message\n\n"
+        "`!status`           — Show current chore assignments and completion status\n"
+        "`!mychore`          — Show your current chore assignment\n"
+        "`!history`          — Show the last 5 completed cycles\n"
+        "`!view-leaderboard` — Show the points leaderboard\n"
+        "`!help`             — Show this help message\n\n"
         "Say `chore complete`, `done`, `finished`, or `completed` to mark your chore done."
     )
     await message.channel.send(help_text)
@@ -178,7 +182,6 @@ async def _handle_mychore(message: discord.Message) -> None:
             )
             return
 
-    # User is not in this cycle's assignments — silently ignore or inform
     await message.channel.send("You don't have a chore assigned this cycle.")
 
 
@@ -188,24 +191,34 @@ async def _handle_history(message: discord.Message) -> None:
     await message.channel.send(chores.format_history_message(history))
 
 
+async def _handle_leaderboard(message: discord.Message) -> None:
+    """Post the points leaderboard."""
+    leaderboard = state_module.load_leaderboard()
+    if not leaderboard:
+        await message.channel.send("No leaderboard data yet.")
+        return
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines = ["**🏆 Leaderboard**\n"]
+    for i, entry in enumerate(leaderboard):
+        medal = medals[i] if i < len(medals) else f"{i + 1}."
+        lines.append(f"{medal} {entry['name']} — **{entry['points']}** pts")
+    await message.channel.send("\n".join(lines))
+
+
 async def _handle_chore_complete(message: discord.Message) -> None:
     """
     Mark the calling user's chore as complete.
-
-    Possible outcomes:
-    - Assignment found and not yet complete → mark complete, confirm, check for all-done.
-    - Assignment found but already complete → tell them.
-    - User not in assignments → silently ignore.
     """
     current_state = state_module.load_state()
     if not state_module.is_active_cycle(current_state):
-        return  # No active cycle — nothing to complete
+        return
 
     user_id = str(message.author.id)
     found, already_complete = state_module.mark_assignment_complete(current_state, user_id)
 
     if not found:
-        return  # User not in this cycle — ignore silently
+        return
 
     if already_complete:
         await message.channel.send(
@@ -213,15 +226,13 @@ async def _handle_chore_complete(message: discord.Message) -> None:
         )
         return
 
-    # Reload state after write (mark_assignment_complete already saved it)
     current_state = state_module.load_state()
 
-    await message.channel.send(f"✅ Nice work <@{user_id}>! Chore marked as complete.")
+    await message.channel.send(f"✅ Nice work <@{user_id}>! Chore marked as complete. (+2 pts)")
 
-    # Check if everyone is done
     if state_module.all_complete(current_state):
         await message.channel.send(
-            "🎉 All chores done this cycle — great work everyone!"
+            "🎉 All chores done this week — great work everyone!"
         )
 
 

@@ -23,9 +23,10 @@ def _get_conn():
     return psycopg2.connect(database_url)
 
 
-def init_db() -> None:
+def init_db(roommates: list[dict]) -> None:
     """
-    Create the bot_state and assignment_history tables if they don't exist.
+    Create the bot_state, assignment_history, and leaderboard tables if they don't exist.
+    Seeds the leaderboard with each roommate (no-op if they already exist).
     Call once at startup before any load/save operations.
     """
     with _get_conn() as conn:
@@ -45,6 +46,19 @@ def init_db() -> None:
                     archived_at  TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS leaderboard (
+                    discord_user_id TEXT PRIMARY KEY,
+                    name            TEXT NOT NULL,
+                    points          INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            for r in roommates:
+                cur.execute("""
+                    INSERT INTO leaderboard (discord_user_id, name)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (r["discord_user_id"], r["name"]))
         conn.commit()
     logger.info("[state] Database initialised.")
 
@@ -95,6 +109,32 @@ def is_active_cycle(state: dict) -> bool:
         return False
 
 
+def add_points(discord_user_id: str, points: int) -> None:
+    """Add points to a user's leaderboard total."""
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE leaderboard SET points = points + %s WHERE discord_user_id = %s",
+                    (points, discord_user_id),
+                )
+            conn.commit()
+    except Exception as e:
+        logger.error(f"[state] Failed to add points: {e}")
+
+
+def load_leaderboard() -> list[dict]:
+    """Return all leaderboard entries ordered by points descending."""
+    try:
+        with _get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("SELECT discord_user_id, name, points FROM leaderboard ORDER BY points DESC")
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"[state] Failed to load leaderboard: {e}")
+        return []
+
+
 def mark_assignment_complete(state: dict, discord_user_id: str) -> tuple[bool, bool]:
     """
     Find the assignment for the given user and mark it complete.
@@ -109,6 +149,7 @@ def mark_assignment_complete(state: dict, discord_user_id: str) -> tuple[bool, b
             assignment["completed"] = True
             assignment["completed_at"] = datetime.now(timezone.utc).isoformat()
             save_state(state)
+            add_points(discord_user_id, 2)
             return True, False  # found, just marked complete
     return False, False  # not in this cycle
 

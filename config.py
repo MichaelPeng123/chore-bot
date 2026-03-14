@@ -9,7 +9,7 @@ import sys
 
 CONFIG_PATH = "config.json"
 
-REQUIRED_KEYS = ["roommates", "chores", "cycle_days", "remind_before_days", "timezone"]
+REQUIRED_KEYS = ["roommates", "chores", "timezone"]
 
 
 def load_config() -> dict:
