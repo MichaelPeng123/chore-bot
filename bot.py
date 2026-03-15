@@ -80,21 +80,31 @@ async def on_ready():
     except Exception as e:
         logger.error(f"[bot] Could not post rules message: {e}")
 
-    # --- Bootstrap: ensure there is an active cycle ---
+    # --- Bootstrap: ensure there is an active cycle with all configured roommates ---
     current_state = state_module.load_state()
-    if not state_module.is_active_cycle(current_state):
-        logger.info("[bot] No active cycle found — starting cycle 1.")
-        prev_cycle = current_state.get("cycle_number", 0)
-        new_state = chores.build_new_cycle(config, prev_cycle + 1)
-        state_module.save_state(new_state)
+    configured_ids = {r["discord_user_id"] for r in config["roommates"]}
+    assigned_ids = {a["discord_user_id"] for a in current_state.get("assignments", [])}
+    roommates_changed = configured_ids != assigned_ids
 
-        try:
-            channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
-            await channel.send(chores.format_assignment_message(new_state))
-        except Exception as e:
-            logger.error(f"[bot] Could not post initial assignment: {e}")
+    if not state_module.is_active_cycle(current_state) or roommates_changed:
+        if roommates_changed and state_module.is_active_cycle(current_state):
+            logger.info("[bot] Roommate list changed — restarting current cycle with updated assignments.")
+        else:
+            logger.info("[bot] No active cycle found — starting a new cycle.")
+        if current_state:
+            state_module.archive_cycle(current_state)
+        prev_cycle = current_state.get("cycle_number", 0)
+        current_state = chores.build_new_cycle(config, prev_cycle + 1)
+        state_module.save_state(current_state)
     else:
         logger.info(f"[bot] Resuming active cycle {current_state.get('cycle_number')}.")
+
+    # --- Always announce current assignments on startup ---
+    try:
+        channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
+        await channel.send(chores.format_assignment_message(current_state))
+    except Exception as e:
+        logger.error(f"[bot] Could not post assignment message: {e}")
 
     # --- Start scheduler ---
     scheduler = scheduler_module.setup_scheduler(bot, config, config["timezone"])
@@ -202,7 +212,7 @@ async def _handle_leaderboard(message: discord.Message) -> None:
     lines = ["**🏆 Leaderboard**\n"]
     for i, entry in enumerate(leaderboard):
         medal = medals[i] if i < len(medals) else f"{i + 1}."
-        lines.append(f"{medal} {entry['name']} — **{entry['points']}** pts")
+        lines.append(f"{medal} <@{entry['discord_user_id']}> — **{entry['points']}** pts")
     await message.channel.send("\n".join(lines))
 
 
